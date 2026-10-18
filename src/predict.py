@@ -45,10 +45,30 @@ def validation_predictions(bundle) -> None:
     print(f"wrote {path}  ({len(out):,} rows)")
 
 
+def _project_daily(train: pd.DataFrame, col: str, dates: pd.Series) -> np.ndarray:
+    """Project a daily series forward: linear trend from the last 60 days + a per-dayofweek
+    residual pulled from the training tail. Keeps the trend and the weekly cycle both."""
+    daily = train.groupby("date")[col].mean().reset_index().sort_values("date")
+    tail = daily.tail(60).copy()
+    tail["t"] = (tail["date"] - tail["date"].min()).dt.days
+    slope, intercept = np.polyfit(tail["t"], tail[col], 1)
+    tail["trend"] = slope * tail["t"] + intercept
+    tail["resid"] = tail[col] - tail["trend"]
+    tail["dow"] = tail["date"].dt.dayofweek
+    dow_offset = tail.groupby("dow")["resid"].mean().to_dict()
+    out = []
+    for d in dates:
+        t = (d - tail["date"].min()).days
+        out.append(slope * t + intercept + dow_offset.get(d.dayofweek, 0.0))
+    return np.array(out)
+
+
 def december_predictions(bundle) -> None:
     path = DATA / "december_chart_inputs.csv"
     dec = pd.read_csv(path)
     train = pd.read_csv(DATA / "train_test.csv")
+    train["date"] = pd.to_datetime(train["date"])
+
     lex = train[train["pickup"] == "Lexington"][["pickup_lat", "pickup_lon"]].iloc[0]
     fw = train[train["delivery"] == "Fort Wayne"][["delivery_lat", "delivery_lon"]].iloc[0]
     dec_feat = dec.copy()
@@ -56,10 +76,11 @@ def december_predictions(bundle) -> None:
     dec_feat["pickup_lon"] = lex["pickup_lon"]
     dec_feat["delivery_lat"] = fw["delivery_lat"]
     dec_feat["delivery_lon"] = fw["delivery_lon"]
-    train["date"] = pd.to_datetime(train["date"])
-    tail = train[train["date"] >= train["date"].max() - pd.Timedelta(days=30)]
-    dec_feat["market_index"] = float(tail["market_index"].mean())
-    dec_feat["quote_signal"] = float(tail["quote_signal"].median())
+
+    dates = pd.to_datetime(dec_feat["date"])
+    dec_feat["market_index"] = _project_daily(train, "market_index", dates)
+    dec_feat["quote_signal"] = _project_daily(train, "quote_signal", dates)
+
     preds = _predict(dec_feat, bundle)
     dec["predicted_rate"] = np.round(preds, 2)
     dec.to_csv(path, index=False)

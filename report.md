@@ -66,9 +66,12 @@ Fixed route Lexington → Fort Wayne, 360 miles, Dry Van, 32,000 lb — only the
 
 ![December chart](scorer_results/candidate_december.png)
 
-Predictions sit around **$833** (~$2.31/mi), matching the Lexington → Fort Wayne lane average in training ($856, 32 samples). Day-to-day movement comes from the dayofweek effect; raw ordinal date features (dayofyear, week, month) can't extrapolate past October in a tree model, which is why the shape is a repeating weekly cycle rather than a drift.
+Predictions sit around **$852** (~$2.37/mi), close to the Lexington → Fort Wayne training average ($856, 32 samples). The curve shows a clear weekly cycle (Thu/Fri peaks, weekend troughs) and a gentle upward drift from ~$845 on Dec 1 to ~$862 on Dec 31.
 
-One subtle fix: the dataset's `pickup_lat`/`pickup_lon` for each city are **not** the real geographic coordinates — they're the dataset's own fixed per-city values. For the fixed December route I pull them straight from `train_test.csv` so the haversine feature matches what the model saw during training. Using Google-maps coords put December in the wrong leaf and dropped the baseline by ~$40.
+Two things make the shape work:
+
+1. **Dataset lat/lon, not geographic lat/lon.** The dataset's `pickup_lat`/`pickup_lon` for each city are the dataset's own fixed per-city values, not Google-maps coords. For the fixed December route I pull them straight from `train_test.csv` so haversine matches what the model saw during training. Using Google-maps coords put December in the wrong leaf and dropped the baseline by ~$40.
+2. **Projected `market_index` and `quote_signal` per day.** Both features have a weekly cycle (Thu/Fri highs, weekend lows) and a mild upward trend over the training window. For each Dec day I project them forward: a linear trend fit on the last 60 training days + the per-dayofweek residual from that tail. This gives the model real day-to-day signal instead of a flat month-long average.
 
 ## Reproducing
 
