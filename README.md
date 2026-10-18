@@ -34,7 +34,7 @@ Outputs:
 
 ## Approach
 
-See `report.pdf` for the write-up. Short version: time-based holdout (last 30 days of training as validation), sklearn HistGradientBoosting on log-rate with city/equipment as native categoricals, cleaned negative/missing weights and imputed market index. Holdout MAE ≈ $101 / 4.9% MAPE.
+See `report.pdf` for the write-up. Short version: time-based holdout (last 30 days of training as validation), ensemble of HistGradientBoosting + ExtraTrees on log-rate with city/equipment as native categoricals, dropped 506 rows with impossible road ratios or outlier rate-per-mile, imputed negative/missing weights and market index. Holdout MAE **$59.47 / 2.45% MAPE**.
 
 ## Layout
 

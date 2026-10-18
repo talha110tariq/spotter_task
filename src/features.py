@@ -34,7 +34,6 @@ def build(df: pd.DataFrame, weight_median: float | None = None,
     out = df.copy()
     out["date"] = pd.to_datetime(out["date"])
 
-    # negative/zero weights are garbage — drop them to NaN and fill with median
     out.loc[out["weight"] <= 0, "weight"] = np.nan
     if weight_median is None:
         weight_median = float(out["weight"].median())
@@ -61,3 +60,19 @@ def build(df: pd.DataFrame, weight_median: float | None = None,
     stats = {"weight_median": weight_median, "market_median": market_median,
              "categories": categories}
     return out, stats
+
+
+def drop_bad_rows(df: pd.DataFrame) -> pd.DataFrame:
+    """Rows where distance is nowhere near the great-circle, or price is way off
+    the per-equipment market, are almost certainly data errors."""
+    hv = _haversine(df["pickup_lat"], df["pickup_lon"], df["delivery_lat"], df["delivery_lon"])
+    road_ratio = df["distance"] / hv.replace(0, np.nan)
+    keep = (road_ratio.between(1.0, 2.0)) | road_ratio.isna()
+
+    rpm = df["posted_rate"] / df["distance"]
+    for eq, g in df.groupby("equipment"):
+        g_rpm = g["posted_rate"] / g["distance"]
+        lo, hi = g_rpm.quantile(0.005), g_rpm.quantile(0.995)
+        keep &= ~((df["equipment"] == eq) & ((rpm < lo) | (rpm > hi)))
+
+    return df[keep].reset_index(drop=True)

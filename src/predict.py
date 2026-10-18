@@ -6,7 +6,7 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
-from .features import build
+from .features import CATEGORICAL, build
 
 ROOT = Path(__file__).resolve().parents[1]
 DATA = ROOT / "data"
@@ -17,10 +17,23 @@ def _load():
         return pickle.load(f)
 
 
+def _numeric(X: pd.DataFrame, enc) -> np.ndarray:
+    cats = X[CATEGORICAL].astype(str).fillna("NA")
+    cat_arr = enc.transform(cats)
+    num = X.drop(columns=CATEGORICAL).to_numpy(dtype=float)
+    return np.hstack([cat_arr, num])
+
+
 def _predict(df: pd.DataFrame, bundle) -> np.ndarray:
     s = bundle["stats"]
     feat, _ = build(df, s["weight_median"], s["market_median"], s.get("categories"))
-    return np.expm1(bundle["model"].predict(feat[bundle["features"]]))
+    X = feat[bundle["features"]]
+    X_num = _numeric(X, bundle["enc"])
+    p_h = np.expm1(bundle["hgb"].predict(X))
+    p_e = np.expm1(bundle["et"].predict(X_num))
+    p_r = np.expm1(bundle["ridge"].predict(X_num))
+    wh, we, wr = bundle["weights"]
+    return wh * p_h + we * p_e + wr * p_r
 
 
 def validation_predictions(bundle) -> None:
@@ -35,7 +48,6 @@ def validation_predictions(bundle) -> None:
 def december_predictions(bundle) -> None:
     path = DATA / "december_chart_inputs.csv"
     dec = pd.read_csv(path)
-    # pull the lat/lon the dataset itself uses for these cities (not the real ones)
     train = pd.read_csv(DATA / "train_test.csv")
     lex = train[train["pickup"] == "Lexington"][["pickup_lat", "pickup_lon"]].iloc[0]
     fw = train[train["delivery"] == "Fort Wayne"][["delivery_lat", "delivery_lon"]].iloc[0]
@@ -44,7 +56,6 @@ def december_predictions(bundle) -> None:
     dec_feat["pickup_lon"] = lex["pickup_lon"]
     dec_feat["delivery_lat"] = fw["delivery_lat"]
     dec_feat["delivery_lon"] = fw["delivery_lon"]
-    # market_index: use the trailing 30-day training average, feels more honest than NaN
     train["date"] = pd.to_datetime(train["date"])
     tail = train[train["date"] >= train["date"].max() - pd.Timedelta(days=30)]
     dec_feat["market_index"] = float(tail["market_index"].mean())
