@@ -53,7 +53,9 @@ Fixed route Lexington → Fort Wayne, 360 miles, Dry Van, 32,000 lb — only the
 
 ![December chart](scorer_results/candidate_december.png)
 
-Predictions sit around $790 (~$2.19/mi), which matches the Dry Van median rate per mile in training. Small day-to-day movement is driven by weekday / week-of-year seasonality learned from the training window; the model is extrapolating one month past the end of training, so the curve is intentionally smooth.
+Predictions sit around $833 (~$2.32/mi), close to the training average for the Lexington → Fort Wayne lane ($856, 32 samples). Day-to-day movement is small and comes from the dayofweek effect learned from training; raw ordinal date features (dayofyear, week, month) can't extrapolate past October in a tree model, so the shape is intentionally smooth rather than invented trend.
+
+One subtle fix worth calling out: the dataset's `pickup_lat`/`pickup_lon` for each city are not the real geographic coordinates — they're the dataset's own fixed per-city values. For the fixed December route I pull them straight from the training file so the haversine feature matches what the model saw during training; using Google-maps coords put December in the wrong leaf and dropped the baseline by ~$40.
 
 ## Reproducing
 

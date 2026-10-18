@@ -18,7 +18,8 @@ def _load():
 
 
 def _predict(df: pd.DataFrame, bundle) -> np.ndarray:
-    feat, _ = build(df, bundle["stats"]["weight_median"], bundle["stats"]["market_median"])
+    s = bundle["stats"]
+    feat, _ = build(df, s["weight_median"], s["market_median"], s.get("categories"))
     return np.expm1(bundle["model"].predict(feat[bundle["features"]]))
 
 
@@ -34,15 +35,20 @@ def validation_predictions(bundle) -> None:
 def december_predictions(bundle) -> None:
     path = DATA / "december_chart_inputs.csv"
     dec = pd.read_csv(path)
-    # scorer needs the same seven columns, in order, so we fill in place
-    # the fixed-route rows don't carry lat/lon; use Lexington KY and Fort Wayne IN
+    # pull the lat/lon the dataset itself uses for these cities (not the real ones)
+    train = pd.read_csv(DATA / "train_test.csv")
+    lex = train[train["pickup"] == "Lexington"][["pickup_lat", "pickup_lon"]].iloc[0]
+    fw = train[train["delivery"] == "Fort Wayne"][["delivery_lat", "delivery_lon"]].iloc[0]
     dec_feat = dec.copy()
-    dec_feat["pickup_lat"] = 38.0406
-    dec_feat["pickup_lon"] = -84.5037
-    dec_feat["delivery_lat"] = 41.0793
-    dec_feat["delivery_lon"] = -85.1394
-    dec_feat["market_index"] = np.nan
-    dec_feat["quote_signal"] = 2.05  # near the training median
+    dec_feat["pickup_lat"] = lex["pickup_lat"]
+    dec_feat["pickup_lon"] = lex["pickup_lon"]
+    dec_feat["delivery_lat"] = fw["delivery_lat"]
+    dec_feat["delivery_lon"] = fw["delivery_lon"]
+    # market_index: use the trailing 30-day training average, feels more honest than NaN
+    train["date"] = pd.to_datetime(train["date"])
+    tail = train[train["date"] >= train["date"].max() - pd.Timedelta(days=30)]
+    dec_feat["market_index"] = float(tail["market_index"].mean())
+    dec_feat["quote_signal"] = float(tail["quote_signal"].median())
     preds = _predict(dec_feat, bundle)
     dec["predicted_rate"] = np.round(preds, 2)
     dec.to_csv(path, index=False)

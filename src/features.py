@@ -29,7 +29,8 @@ def _haversine(lat1, lon1, lat2, lon2) -> np.ndarray:
 
 
 def build(df: pd.DataFrame, weight_median: float | None = None,
-          market_median: float | None = None) -> tuple[pd.DataFrame, dict]:
+          market_median: float | None = None,
+          categories: dict | None = None) -> tuple[pd.DataFrame, dict]:
     out = df.copy()
     out["date"] = pd.to_datetime(out["date"])
 
@@ -52,8 +53,11 @@ def build(df: pd.DataFrame, weight_median: float | None = None,
     out["month"] = out["date"].dt.month
     out["week"] = out["date"].dt.isocalendar().week.astype(int)
 
+    if categories is None:
+        categories = {col: sorted(out[col].dropna().unique().tolist()) for col in CATEGORICAL}
     for col in CATEGORICAL:
-        out[col] = out[col].astype("category")
+        out[col] = pd.Categorical(out[col], categories=categories[col])
 
-    stats = {"weight_median": weight_median, "market_median": market_median}
+    stats = {"weight_median": weight_median, "market_median": market_median,
+             "categories": categories}
     return out, stats
