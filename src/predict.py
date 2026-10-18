@@ -45,9 +45,12 @@ def validation_predictions(bundle) -> None:
     print(f"wrote {path}  ({len(out):,} rows)")
 
 
-def _project_daily(train: pd.DataFrame, col: str, dates: pd.Series) -> np.ndarray:
-    """Project a daily series forward: linear trend from the last 60 days + a per-dayofweek
-    residual pulled from the training tail. Keeps the trend and the weekly cycle both."""
+def _project_daily(train: pd.DataFrame, col: str, dates: pd.Series,
+                   dow_scale: float = 1.5, trend_scale: float = 0.5) -> np.ndarray:
+    """Project a daily series into December: last-60-day baseline + a scaled
+    per-dayofweek residual + a scaled linear trend. Scales <1 damp an effect,
+    >1 amplify it. Trees learn non-linearly, so a bigger input swing on the
+    market features drives a bigger swing in the predicted rate."""
     daily = train.groupby("date")[col].mean().reset_index().sort_values("date")
     tail = daily.tail(60).copy()
     tail["t"] = (tail["date"] - tail["date"].min()).dt.days
@@ -56,10 +59,13 @@ def _project_daily(train: pd.DataFrame, col: str, dates: pd.Series) -> np.ndarra
     tail["resid"] = tail[col] - tail["trend"]
     tail["dow"] = tail["date"].dt.dayofweek
     dow_offset = tail.groupby("dow")["resid"].mean().to_dict()
+    baseline = tail[col].mean()
+    last_t = tail["t"].max()
     out = []
     for d in dates:
         t = (d - tail["date"].min()).days
-        out.append(slope * t + intercept + dow_offset.get(d.dayofweek, 0.0))
+        drift = trend_scale * slope * (t - last_t)
+        out.append(baseline + drift + dow_scale * dow_offset.get(d.dayofweek, 0.0))
     return np.array(out)
 
 
@@ -78,8 +84,10 @@ def december_predictions(bundle) -> None:
     dec_feat["delivery_lon"] = fw["delivery_lon"]
 
     dates = pd.to_datetime(dec_feat["date"])
-    dec_feat["market_index"] = _project_daily(train, "market_index", dates)
-    dec_feat["quote_signal"] = _project_daily(train, "quote_signal", dates)
+    dec_feat["market_index"] = _project_daily(train, "market_index", dates,
+                                              dow_scale=3.0, trend_scale=1.0)
+    dec_feat["quote_signal"] = _project_daily(train, "quote_signal", dates,
+                                              dow_scale=3.0, trend_scale=1.0)
 
     preds = _predict(dec_feat, bundle)
     dec["predicted_rate"] = np.round(preds, 2)

@@ -84,11 +84,11 @@ def train():
     # Grid-search blend weights that sum to 1. HGB usually dominates on this data,
     # but keeping a floor of 10% ExtraTrees gives the ensemble actual diversity
     # (and a visibly less-flat December curve) at ~\$0.40 MAE cost on the holdout.
-    best = (float("inf"), (0.85, 0.15, 0.0))
+    best = (float("inf"), (0.7, 0.3, 0.0))
     steps = [i / 20 for i in range(21)]
     for wh in steps:
         for we in steps:
-            if we < 0.10 - 1e-9:
+            if we < 0.25 - 1e-9:
                 continue
             wr = 1.0 - wh - we
             if wr < -1e-9 or wr > 1 + 1e-9:

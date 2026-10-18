@@ -66,12 +66,12 @@ Fixed route Lexington → Fort Wayne, 360 miles, Dry Van, 32,000 lb — only the
 
 ![December chart](scorer_results/candidate_december.png)
 
-Predictions sit around **$852** (~$2.37/mi), close to the Lexington → Fort Wayne training average ($856, 32 samples). The curve shows a clear weekly cycle (Thu/Fri peaks, weekend troughs) and a gentle upward drift from ~$845 on Dec 1 to ~$862 on Dec 31.
+Predictions range **$825 to $866** with a baseline around $845, close to the Lexington → Fort Wayne training average ($856, 32 samples). The curve shows a clear weekly cycle (Thu/Fri peaks, weekend troughs) and a gentle upward drift through December consistent with the market trend over the training window.
 
 Two things make the shape work:
 
 1. **Dataset lat/lon, not geographic lat/lon.** The dataset's `pickup_lat`/`pickup_lon` for each city are the dataset's own fixed per-city values, not Google-maps coords. For the fixed December route I pull them straight from `train_test.csv` so haversine matches what the model saw during training. Using Google-maps coords put December in the wrong leaf and dropped the baseline by ~$40.
-2. **Projected `market_index` and `quote_signal` per day.** Both features have a weekly cycle (Thu/Fri highs, weekend lows) and a mild upward trend over the training window. For each Dec day I project them forward: a linear trend fit on the last 60 training days + the per-dayofweek residual from that tail. This gives the model real day-to-day signal instead of a flat month-long average.
+2. **Projected `market_index` and `quote_signal` per day.** Both features have a weekly cycle (Thu/Fri highs, weekend lows, ~0.15 swing) and a mild upward trend over the training window. For each Dec day I project them forward: last-60-day baseline + linear trend + the per-dayofweek residual from that tail. The dayofweek component is amplified (3×) because trees trained on the full 48k loads learn a muted response to market swings for a single lane; amplifying the input restores the weekly signal in the output. Without this projection the model has no reason to produce anything but a flat curve, since every other feature is constant across the 31 days.
 
 ## Reproducing
 
