@@ -1,65 +1,66 @@
 # Freight Rate Prediction — Report
 
-## 1. Approach to validating the train/test split
+## 1. How the training data was split and validated
 
-### Why a time-based split is the only honest option here
+### Why a time-based split
 
-The labeled file (`train_test.csv`) covers 2025-01-01 through 2025-10-31. The scoring file (`validation.csv`) covers 2025-11-01 through 2025-12-31 — **strictly in the future** relative to training. The real question the model is being evaluated on is *"can it price a load one month from now?"*, not *"can it price a load drawn from the same distribution?"*.
+The training file covers January through October 2025. The scoring file covers November and December 2025 — in other words, the future. The question the model is really being judged on is "can it price a load one month from now?", not "can it price a random load from any month?".
 
-Random k-fold cross-validation would leak information backward in time: October rows would end up in training folds, and November and December rows (if we had them) would end up in holdout folds. That inflates the apparent score. A production dispatcher making next-week quotes doesn't have that luxury — they're always forecasting forward.
+If I had shuffled all the rows and done a normal train/test split, October rows would end up in the training folds and (hypothetically) November and December rows in the test folds. That would make the model look better than it really is, because a model that's seen rows from after a given date has an unfair advantage. A real dispatcher quoting next week's loads doesn't have that luxury.
 
-So the entire validation regime is built around **time**, not row shuffling.
+So the split is strictly by date, never by random shuffle.
 
 ### The split
 
 | Set | Date range | Rows | Role |
 |---|---|---|---|
-| Fit | 2025-01-01 → 2025-10-01 | ~42,900 | Model training |
-| Holdout | 2025-10-02 → 2025-10-31 | ~4,600 | Model and blend selection |
-| Scoring | 2025-11-01 → 2025-12-31 | 12,000 | Final submission (`validation.csv`) |
+| Fit | 2025-01-01 to 2025-10-01 | ~42,900 | Model training |
+| Holdout | 2025-10-02 to 2025-10-31 | ~4,600 | Honest check before submission |
+| Scoring | 2025-11-01 to 2025-12-31 | 12,000 | Final submission |
 
-The 30-day holdout window was chosen because it **mirrors the gap between training and the scoring set** — one month into the future, same lanes, same equipment, same seasonality boundary. Validating on a shorter window (say, the last week of October) would be optimistic; validating on the full last three months would eat too much of the training signal.
+The holdout is 30 days long on purpose — it matches the gap between training and the real scoring set. The model has to predict a month it has never seen, exactly like the real submission. A shorter holdout (say the last week of October) would be too easy; a longer one would waste training signal.
 
-### What was tuned on the holdout, and what was not
+### What was decided using the holdout, and what wasn't
 
-Only three things were decided against the holdout:
-- Which model families to include in the ensemble.
-- The blend weights across those models.
-- Hyperparameters for the two tree models (via early stopping on an inner 10% split of the fit set — never looking at the holdout during fitting).
+Three choices were made against the holdout:
 
-Nothing was tuned against `validation.csv`. The submitted predictions use models retrained on the **entire** cleaned training set (47,494 rows after dropping 506 inconsistent rows for impossible road-to-haversine ratios and extreme rate-per-mile outliers).
+- Which models to blend together.
+- The blend weights.
+- Tree-model hyperparameters (via an inner 10% check inside the fit set — the holdout was never touched during training).
 
-### Holdout numbers
+Nothing was tuned against the scoring file. Once the holdout numbers looked right, both models were retrained on the full cleaned training set (47,494 rows after dropping 506 bad ones) before producing the submitted predictions.
 
-Ensemble: 75% `HistGradientBoostingRegressor` + 25% `ExtraTreesRegressor`. Ridge regression was included in the blend weight search as a non-linearity sanity check and received zero weight — confirming the problem is strongly non-linear.
+### Holdout results
 
-| Model | MAE | MAPE |
+The submitted model is a blend: **75% gradient-boosted trees + 25% extra-trees**. Ridge regression was included in the search as a sanity check for whether the problem is linear — it got zero weight, so it isn't.
+
+| Model | Mean error | Percent error |
 |---|---|---|
-| HistGradientBoosting (log target, absolute-error loss) | $59.30 | 2.46% |
-| ExtraTrees | $77.07 | 3.27% |
+| Gradient-boosted trees | $59.30 | 2.46% |
+| Extra-trees | $77.07 | 3.27% |
 | Ridge (sanity check) | $431.54 | 21.41% |
-| **Ensemble (0.75 HGB + 0.25 ET)** | **$60.53** | **2.49%** |
+| **Blend (0.75 + 0.25)** | **$60.53** | **2.49%** |
 
-Interpretation: the ensemble's mean absolute error of ~$60 against an average posted rate of ~$2,370 means the submitted predictions should be accurate to roughly 2.5% in dollar terms on genuinely out-of-sample rows.
+The average posted rate in the training set is around $2,370, so a $60 mean error means the submitted predictions should be off by roughly 2.5% in dollars on genuinely unseen rows.
 
-## 2. Fixed December prediction chart
+## 2. The fixed December chart
 
-Produced by `score.py` from `data/december_chart_inputs.csv`. Fixed route: **Lexington → Fort Wayne, 360 miles, Dry Van, 32,000 lb** — only the date changes across the 31 days of December.
+The scorer produces this chart from `data/december_chart_inputs.csv`. The route is fixed: **Lexington to Fort Wayne, 360 miles, Dry Van, 32,000 lb**. Only the date changes across the 31 days of December.
 
 ![December chart](scorer_results/candidate_december.png)
 
 ### How the chart was built
 
-Every input except the date is constant across the 31 rows. A tree model on identical inputs returns an identical prediction, so the fixed-route chart depends entirely on how the date-sensitive features — `dayofweek`, `market_index`, and `quote_signal` — are set up for the forecast window.
+Every input to the model except the date is identical across the 31 rows. If I fed those rows in as-is, the prediction would be the same number 31 times and the chart would be a flat line. The curve comes from how the date-sensitive inputs are set up.
 
-Two decisions matter for interpreting the chart:
+Two things made the chart work:
 
-1. **Dataset lat/lon, not real geographic coordinates.** The dataset's `pickup_lat`/`pickup_lon` for each city are the dataset's own fixed synthetic values, not Google-maps coords. For the fixed December route the lat/lon are pulled straight from `train_test.csv` so the haversine feature matches what the model saw during training. Using geographic coords put December in the wrong leaf and dropped the baseline by ~$40.
-2. **`market_index` and `quote_signal` projected per day.** Both series exhibit a clear weekly cycle in training (Thu/Fri highs, weekend lows, ~0.15 swing) and a mild upward drift across autumn. Rather than feed the same averaged value to all 31 days, each date gets its own projection: last-60-day baseline + a linear trend extrapolated from the same window + a per-dayofweek residual.
+1. **Dataset coordinates, not real geographic coordinates.** The latitude and longitude values in the dataset are not the real coordinates for each city — they're the dataset's own fixed values. For the fixed route I pull them straight from the training file so the distance-related features line up with what the model learned from. Using real Google-maps coordinates put December into the wrong part of the model and dropped the baseline price by around $40.
+2. **Market and quote values projected per day.** Both `market_index` and `quote_signal` have a clear weekly pattern in training (higher Thursday and Friday, lower on weekends) and a gentle upward drift across autumn. Rather than feed the same monthly average to all 31 days, each date gets its own projected value: the average of the last 60 training days, plus the trend, plus the day-of-week offset from the same window.
 
 ### What the chart shows
 
-- **Baseline ~$845**, close to the Lexington → Fort Wayne training average of $856 (n=32 historical loads on this exact lane).
-- **Weekly cycle** — peaks on Thursdays and Fridays, troughs on weekends — consistent with the market_index pattern in the training tail.
-- **Gentle upward drift** through the month, reflecting the autumn trend in the market features rather than any extrapolation by the tree model itself (trees can't extrapolate past training; the drift comes from the feature projection).
-- **Range $825–$866**, spread ~$41 — in line with typical month-over-month rate variation observed on comparable lanes in training.
+- Baseline around **$845**, close to the training average for the Lexington → Fort Wayne lane ($856 across 32 historical loads).
+- Clear weekly cycle — peaks Thursday / Friday, troughs on weekends.
+- Gentle upward drift through the month, driven by the autumn market trend rather than any extrapolation by the model itself.
+- Overall range $825 to $866 (spread about $41), in line with normal month-over-month variation on comparable lanes in training.
